@@ -118,14 +118,11 @@ jobs:
       - name: 编译
         run: |
           cd sdk
+          # 上游 liblucihttp-lua 只声明 DEPENDS:=+liblua（仅库、无头文件），
+          # SDK 里编译必然 fatal error: lua.h —— 这是 LuCI 的依赖 bug。
+          # luci-base 只依赖 +liblucihttp-ucode，不需要 Lua 绑定，直接关掉。
+          echo '# CONFIG_PACKAGE_liblucihttp-lua is not set' >> .config
           make defconfig
-          # 上游 lucihttp-lua 只声明 DEPENDS:=+liblua（仅库），不拉带 lua.h 的
-          # lua 包，SDK 里编译 lucihttp 会 fatal error: lua.h。
-          # 显式选中并先编译 lua，把头文件装进 staging_dir。
-          sed -i 's/^# CONFIG_PACKAGE_lua is not set/CONFIG_PACKAGE_lua=y/' .config || true
-          grep -q '^CONFIG_PACKAGE_lua=' .config || echo 'CONFIG_PACKAGE_lua=y' >> .config
-          make defconfig
-          make package/lua/compile V=s
           make package/rqbit/compile V=s
           make package/luci-app-rqbit/compile V=s
 
