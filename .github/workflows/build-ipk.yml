@@ -101,11 +101,14 @@ jobs:
           [ -n "$dir" ] || { echo "解压后没找到 openwrt-sdk-* 目录"; exit 1; }
           mv "$dir" sdk
 
-      - name: 安装 LuCI feed
+      - name: 安装 feeds
         run: |
           cd sdk
-          ./scripts/feeds update luci
-          ./scripts/feeds install luci-base luci-compat
+          # luci-base 会拉起 lucihttp 的 Lua 绑定，后者依赖 packages feed 里的
+          # lua。只装 luci feed 会导致编译 lucihttp 时找不到 lua.h。
+          ./scripts/feeds update luci packages
+          ./scripts/feeds install luci-base lua
+          ls package/feeds/luci/ | head -20
 
       - name: 放入待编译包
         run: |

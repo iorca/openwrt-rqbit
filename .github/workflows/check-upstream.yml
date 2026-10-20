@@ -113,8 +113,12 @@ jobs:
           git commit -m "rqbit: 跟进上游 v$ver"
           git tag -f "v$ver"
           git push origin HEAD:master
-          git push origin "v$ver"
+          # 标签可能已存在（手工重跑同版本），需要强推。
+          git push --force origin "v$ver"
 
+      # 这一步不能省：上面提交用的是 GITHUB_TOKEN，而 GitHub 不会为
+      # GITHUB_TOKEN 触发的 push 启动新的 workflow run（防递归机制）。
+      # 所以必须显式触发构建。
       - name: 触发构建
         if: steps.bump.outputs.changed == 'true'
         env:

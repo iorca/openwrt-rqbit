@@ -13,7 +13,9 @@ PKG_MAINTAINER:=local
 
 LUCI_TITLE:=LuCI support for the rqbit torrent client
 LUCI_DESCRIPTION:=Web UI to manage the rqbit torrent service: start/stop, add magnets and .torrent files, watch progress and speeds.
-LUCI_DEPENDS:=+rqbit +luci-base +luci-compat
+# 本应用的两个视图都是纯 JS，只用到 luci-base 提供的 view/rpc/ui/poll/form
+# 模块，不需要 luci-compat（那是给旧式 Lua 视图用的）。
+LUCI_DEPENDS:=+rqbit +luci-base
 LUCI_PKGARCH:=all
 
 # LuCI caches the menu index in /tmp/luci-indexcache*, and rpcd only reads
