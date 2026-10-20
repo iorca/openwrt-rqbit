@@ -197,11 +197,18 @@ function stateClass(st, finished) {
 			var numPct = s.total_bytes > 0 ? (s.progress_bytes / s.total_bytes * 100) : 0;
 
 			return E('tr', { 'class': 'tr' }, [
-				E('td', { 'class': 'td', 'data-title': _('名称') }, [
-					E('strong', {}, t.name || t.info_hash.substring(0, 16)),
+				/* 名称列限宽并强制断行：种子名常是几十个字符的日文/英文长串，
+				 * 不约束的话 auto 布局会把进度和速度两列挤出屏幕。 */
+				E('td', { 'class': 'td', 'data-title': _('名称'),
+					'style': 'max-width:300px;min-width:160px' }, [
+					E('strong', {
+						'style': 'display:block;word-break:break-all;overflow-wrap:anywhere'
+					}, t.name || t.info_hash.substring(0, 16)),
 					E('br'),
-					E('small', { 'class': 'cbi-section-descr' },
-						(t.output_folder || '') + ' · ' + (t.info_hash || '').substring(0, 16) + '…')
+					E('small', {
+						'class': 'cbi-section-descr',
+						'style': 'display:block;word-break:break-all;overflow-wrap:anywhere'
+					}, (t.output_folder || '') + ' · ' + (t.info_hash || '').substring(0, 16) + '…')
 				]),
 				E('td', { 'class': 'td', 'data-title': _('状态') }, [
 					E('span', { 'class': stateClass(st, fin) }, stateLabel(st, fin)),
