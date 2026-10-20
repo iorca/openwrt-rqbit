@@ -1,0 +1,61 @@
+name: Build ipk
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # 升级 OpenWrt 时同步这里。SDK 文件名含 gcc 版本，改版本后请确认
+  # downloads.openwrt.org 上的实际文件名。
+  OPENWRT_VERSION: "25.12.6"
+  OPENWRT_GCC: "gcc-14.3.0"
+  TARGET: qualcommax
+  SUBTARGET: ipq60xx
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential ccache ecj fastjar file gawk gettext git \
+            libncurses-dev libssl-dev python3-setuptools python3-distutils \
+            rsync unzip wget xsltproc zlib1g-dev zstd
+
+      - name: Fetch OpenWrt SDK
+        run: |
+          sdk="openwrt-sdk-${OPENWRT_VERSION}-${TARGET}-${SUBTARGET}_${OPENWRT_GCC}_musl.Linux-x86_64"
+          wget -q "https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/${TARGET}/${SUBTARGET}/${sdk}.tar.zst"
+          tar --zstd -xf "${sdk}.tar.zst"
+          mv "${sdk}" sdk
+
+      - name: Install LuCI feed
+        run: |
+          cd sdk
+          ./scripts/feeds update -a
+          ./scripts/feeds install luci-base luci-compat
+
+      - name: Stage packages
+        run: |
+          cp -r "$GITHUB_WORKSPACE/rqbit"          sdk/package/rqbit
+          cp -r "$GITHUB_WORKSPACE/luci-app-rqbit" sdk/package/luci-app-rqbit
+
+      - name: Compile
+        run: |
+          cd sdk
+          make defconfig
+          make package/rqbit/compile V=s
+          make package/luci-app-rqbit/compile V=s
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ipk
+          path: sdk/bin/packages/*/*/*.ipk
+          if-no-files-found: error

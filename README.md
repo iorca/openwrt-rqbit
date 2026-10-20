@@ -83,6 +83,11 @@ config rqbit 'main'
 
 完整 Web 界面由二进制自身提供：`http://<路由器>:3030/web/`
 
+### GitHub Actions
+
+`.github/workflows/build-ipk.yml` 会在 push 时用 OpenWrt SDK（qualcommax/ipq60xx）
+构建两个包并上传 artifact 里的 `.ipk`。版本写在 workflow 顶部的 `env` 里。
+
 ## 已知限制
 
 - 未挂 USB 存储时下载目录只能放 `/tmp`（tmpfs，重启清空）。挂上存储后把
