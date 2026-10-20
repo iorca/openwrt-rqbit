@@ -1,0 +1,125 @@
+name: 跟进上游
+
+# 每两周检查一次 ikatson/rqbit 的新版本，有更新就自动改 Makefile 里的
+# PKG_VERSION / PKG_HASH 并提交，再由 build-ipk 工作流完成编译。
+#
+# 为什么不用 cron "0 4 */14 * *"：那个写法是按「每月第 1/15/29 天」触发，
+# 月末会被截断，不是真正的 14 天周期。这里改成每周跑一次 + 用纪元周数
+# 奇偶做闸门，得到严格的 14 天节拍。
+
+on:
+  schedule:
+    - cron: '17 4 * * 0'    # 每周日 UTC 04:17
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '忽略两周闸门，强制检查并提交'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_REPO: ikatson/rqbit
+  ASSET: rqbit-linux-arm64
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.bump.outputs.changed }}
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 两周闸门
+        id: gate
+        run: |
+          # 纪元秒 // 一周秒数，再取奇偶。相邻两次周日运行相差正好 7 天，
+          # 因此奇偶必然交替 —— 即每隔一周执行一次。
+          parity=$(( $(date +%s) / 604800 % 2 ))
+          echo "parity=$parity (0=本次执行)"
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "run=$([ "$parity" -eq 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: 查询上游最新版本
+        if: steps.gate.outputs.run == 'true'
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          tag=$(gh api "repos/$UPSTREAM_REPO/releases/latest" --jq '.tag_name')
+          ver=${tag#v}
+          case "$ver" in
+            *[!0-9.]*) echo "版本号异常: $ver"; exit 1 ;;
+          esac
+          echo "tag=$tag"     >> "$GITHUB_OUTPUT"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "上游最新: $ver"
+
+      - name: 比对并更新
+        if: steps.gate.outputs.run == 'true'
+        id: bump
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          ver="${{ steps.upstream.outputs.version }}"
+          cur=$(grep -m1 '^PKG_VERSION:=' rqbit/Makefile | cut -d= -f2)
+          echo "当前: $cur  上游: $ver"
+          if [ "$ver" = "$cur" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          newest=$(printf '%s\n%s\n' "$cur" "$ver" | sort -V | tail -1)
+          if [ "$newest" != "$ver" ]; then
+            echo "上游版本更旧，跳过。"; echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          url="https://github.com/$UPSTREAM_REPO/releases/download/v${ver}/$ASSET"
+          curl -fsSL -o /tmp/rqbit-asset "$url"
+
+          # 拒绝 HTML 错误页、x86 二进制、动态链接产物。
+          python3 -c '
+          import struct, sys
+          d = open("/tmp/rqbit-asset", "rb").read()
+          assert d[:4] == b"\x7fELF",            "不是 ELF（可能是错误页）"
+          assert struct.unpack_from("<H", d, 18)[0] == 0xB7, "不是 aarch64"
+          assert struct.unpack_from("<H", d, 16)[0] in (2, 3), "不是可执行文件"
+          print("ELF aarch64 校验通过，%d 字节" % len(d))
+          '
+
+          hash=$(sha256sum /tmp/rqbit-asset | cut -d' ' -f1)
+          sed -i "s/^PKG_VERSION:=.*/PKG_VERSION:=$ver/" rqbit/Makefile
+          sed -i "s/^PKG_HASH:=.*/PKG_HASH:=$hash/"       rqbit/Makefile
+          sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=1/"      rqbit/Makefile
+          rm -f /tmp/rqbit-asset
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "已更新到 $ver ($hash)"
+
+      - name: 提交并打标签
+        if: steps.bump.outputs.changed == 'true'
+        run: |
+          set -e
+          ver="${{ steps.bump.outputs.version }}"
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add rqbit/Makefile
+          git commit -m "rqbit: 跟进上游 v$ver"
+          git tag -f "v$ver"
+          git push origin HEAD:master
+          git push origin "v$ver"
+
+      - name: 触发构建
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh workflow run build-ipk.yml --ref master
+          echo "已触发 build-ipk.yml"

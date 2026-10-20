@@ -1,19 +1,28 @@
-name: Build ipk
+name: 构建 ipk
 
 on:
   push:
     branches: [master]
-    tags: ["v*"]
-  pull_request:
+    paths:
+      # 空提交（保活心跳）不会命中这些路径，因此不会触发无谓的重建。
+      - 'rqbit/**'
+      - 'luci-app-rqbit/**'
+      - 'tools/**'
+      - '.github/workflows/build-ipk.yml'
   workflow_dispatch:
+  schedule:
+    # 每周一 UTC 04:37 例行重建，保证包始终可用。
+    - cron: '37 4 * * 1'
+
+permissions:
+  contents: read
 
 env:
-  # 升级 OpenWrt 时同步这里。SDK 文件名含 gcc 版本，改版本后请确认
-  # downloads.openwrt.org 上的实际文件名。
-  OPENWRT_VERSION: "25.12.6"
-  OPENWRT_GCC: "gcc-14.3.0"
   TARGET: qualcommax
   SUBTARGET: ipq60xx
+  # 会自动探测 25.12.x 的最新版本；如需固定，把 RELEASE_PIN 改成具体版本号。
+  RELEASE_SERIES: '25.12'
+  RELEASE_PIN: ''
 
 jobs:
   build:
@@ -21,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: 安装依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -29,33 +38,70 @@ jobs:
             libncurses-dev libssl-dev python3-setuptools python3-distutils \
             rsync unzip wget xsltproc zlib1g-dev zstd
 
-      - name: Fetch OpenWrt SDK
+      - name: 解析 SDK 下载地址
+        id: sdk
         run: |
-          sdk="openwrt-sdk-${OPENWRT_VERSION}-${TARGET}-${SUBTARGET}_${OPENWRT_GCC}_musl.Linux-x86_64"
-          wget -q "https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/${TARGET}/${SUBTARGET}/${sdk}.tar.zst"
-          tar --zstd -xf "${sdk}.tar.zst"
-          mv "${sdk}" sdk
+          set -e
+          if [ -n "$RELEASE_PIN" ]; then
+            ver="$RELEASE_PIN"
+          else
+            ver=$(curl -fsSL https://downloads.openwrt.org/releases/ \
+                  | grep -oE "href=\"${RELEASE_SERIES}\.[0-9]+/\"" \
+                  | grep -oE '[0-9]+(\.[0-9]+)+' | sort -V | tail -1)
+          fi
+          [ -n "$ver" ] || { echo "找不到 ${RELEASE_SERIES}.x 版本"; exit 1; }
+          dir="https://downloads.openwrt.org/releases/$ver/targets/$TARGET/$SUBTARGET/"
+          file=$(curl -fsSL "$dir" | grep -oE 'openwrt-sdk-[^"?#]*\.tar\.zst' | head -1)
+          [ -n "$file" ] || { echo "找不到 SDK 文件: $dir"; exit 1; }
+          {
+            echo "version=$ver"
+            echo "url=$dir$file"
+          } >> "$GITHUB_OUTPUT"
+          echo "SDK: $dir$file"
 
-      - name: Install LuCI feed
+      - name: 缓存 SDK
+        id: cache-sdk
+        uses: actions/cache@v4
+        with:
+          path: sdk
+          key: openwrt-sdk-${{ env.TARGET }}-${{ env.SUBTARGET }}-${{ steps.sdk.outputs.version }}
+
+      - name: 下载并解压 SDK
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          curl -fsSL -o sdk.tar.zst "${{ steps.sdk.outputs.url }}"
+          tar --zstd -xf sdk.tar.zst
+          rm -f sdk.tar.zst
+          dir=$(find . -maxdepth 1 -type d -name 'openwrt-sdk-*' | head -1)
+          [ -n "$dir" ] || { echo "解压后没找到 openwrt-sdk-* 目录"; exit 1; }
+          mv "$dir" sdk
+
+      - name: 安装 LuCI feed
         run: |
           cd sdk
-          ./scripts/feeds update -a
+          ./scripts/feeds update luci
           ./scripts/feeds install luci-base luci-compat
 
-      - name: Stage packages
+      - name: 放入待编译包
         run: |
           cp -r "$GITHUB_WORKSPACE/rqbit"          sdk/package/rqbit
           cp -r "$GITHUB_WORKSPACE/luci-app-rqbit" sdk/package/luci-app-rqbit
 
-      - name: Compile
+      - name: 编译
         run: |
           cd sdk
           make defconfig
           make package/rqbit/compile V=s
           make package/luci-app-rqbit/compile V=s
 
+      - name: 汇总产物
+        run: |
+          echo "### 构建产物" >> "$GITHUB_STEP_SUMMARY"
+          find sdk/bin/packages -name '*.ipk' -printf '- `%p` (%s bytes)\n' >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: ipk
+          name: rqbit-ipk
           path: sdk/bin/packages/*/*/*.ipk
           if-no-files-found: error

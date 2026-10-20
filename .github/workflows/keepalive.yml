@@ -1,0 +1,53 @@
+name: 保活
+
+# GitHub 会对「仓库 60 天无活动」的定时 workflow 自动禁用。一旦被禁用，
+# 双周更新检查就再也不会跑。这个 workflow 每周做一次空提交，用活动刷新计时器，
+# 从而保证 check-upstream 的定时器一直有效。
+#
+# 注意：空提交不触及 rqbit/** 与 luci-app-rqbit/**，因此不会触发重复的构建。
+
+on:
+  schedule:
+    - cron: '23 3 * * 0'   # 每周日 UTC 03:23
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 心跳提交
+        run: |
+          set -e
+          # 若近 5 天已有提交，说明仓库本身活跃，不制造噪音。
+          if [ -n "$(git log --since='5 days ago' --oneline)" ]; then
+            echo "仓库近 5 天有提交，跳过心跳。"
+            exit 0
+          fi
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git commit --allow-empty -m "chore(keepalive): 定期心跳，避免定时 workflow 被自动禁用"
+          git push
+
+      - name: 重新启用被自动禁用的 workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -e
+          for id in $(gh api "repos/$GH_REPO/actions/workflows" --jq '.workflows[].id'); do
+            state=$(gh api "repos/$GH_REPO/actions/workflows/$id" --jq '.state')
+            name=$(gh api "repos/$GH_REPO/actions/workflows/$id" --jq '.name')
+            echo "$name -> $state"
+            if [ "$state" != "active" ]; then
+              gh api -X PUT "repos/$GH_REPO/actions/workflows/$id/enable" >/dev/null
+              echo "已重新启用 $name"
+            fi
+          done
