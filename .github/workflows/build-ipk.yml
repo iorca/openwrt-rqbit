@@ -11,8 +11,8 @@ on:
       - '.github/workflows/build-ipk.yml'
   workflow_dispatch:
   schedule:
-    # 每周一 UTC 04:37 例行重建，保证包始终可用。
-    - cron: '37 4 * * 1'
+    # 每周日 UTC 04:37 触发，再由 gate 决定是否放行（严格每 14 天一次）。
+    - cron: '37 4 * * 0'
 
 permissions:
   contents: read
@@ -20,20 +20,43 @@ permissions:
 env:
   TARGET: qualcommax
   SUBTARGET: ipq60xx
-  # 会自动探测 25.12.x 的最新版本；如需固定，把 RELEASE_PIN 改成具体版本号。
+  # 自动探测 25.12.x 最新版；需要固定时把 RELEASE_PIN 写成具体版本号。
   RELEASE_SERIES: '25.12'
   RELEASE_PIN: ''
 
 jobs:
+  # GitHub 的 cron 无法表达「每 14 天」：写法 "*/14" 落在「日」字段上，
+  # 表示每月 1/15/29 号，月末会被截断。改为每周跑一次 + 纪元周数奇偶闸门，
+  # 相邻两次运行相差正好 7 天，奇偶必然交替，从而得到严格的 14 天节拍。
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        run: |
+          set -e
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          parity=$(( $(date +%s) / 604800 % 2 ))
+          echo "纪元周奇偶=$parity (0=本次执行)"
+          echo "run=$([ "$parity" -eq 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: 安装依赖
         run: |
-          sudo apt-get update
           # 注意：不要装 python3-distutils —— Ubuntu 24.04 (noble) 已移除该包。
+          sudo apt-get update
           sudo apt-get install -y \
             build-essential ccache ecj fastjar file gawk gettext git \
             libncurses-dev libssl-dev python3-setuptools \
