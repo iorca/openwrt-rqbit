@@ -89,7 +89,7 @@ config rqbit 'main'
 
 | 工作流 | 触发 | 作用 |
 | --- | --- | --- |
-| `build-ipk.yml` | push（包目录变更）、手动、每两周 | 用 OpenWrt SDK（qualcommax/ipq60xx）编译两个包，上传 `.ipk` artifact |
+| `build-ipk.yml` | push（包目录变更）、手动、每两周 | 下载上游二进制并校验后打包，上传 `.ipk` artifact |
 | `check-upstream.yml` | 每两周、手动 | 查 `ikatson/rqbit` 最新 release，有新版就改 `PKG_VERSION` / `PKG_HASH` 并打标签，再触发构建 |
 | `keepalive.yml` | 每周 | 空提交心跳，防止定时 workflow 被 GitHub 自动禁用 |
 
