@@ -17,13 +17,6 @@ on:
 permissions:
   contents: read
 
-env:
-  TARGET: qualcommax
-  SUBTARGET: ipq60xx
-  # 自动探测 25.12.x 最新版；需要固定时把 RELEASE_PIN 写成具体版本号。
-  RELEASE_SERIES: '25.12'
-  RELEASE_PIN: ''
-
 jobs:
   # GitHub 的 cron 无法表达「每 14 天」：写法 "*/14" 落在「日」字段上，
   # 表示每月 1/15/29 号，月末会被截断。改为每周跑一次 + 纪元周数奇偶闸门，
@@ -39,9 +32,6 @@ jobs:
           if [ "${{ github.event_name }}" != "schedule" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if [ "${{ inputs.force }}" = "true" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
           parity=$(( $(date +%s) / 604800 % 2 ))
           echo "纪元周奇偶=$parity (0=本次执行)"
           echo "run=$([ "$parity" -eq 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
@@ -53,86 +43,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装依赖
+      # 为什么不用 OpenWrt SDK：两个包都不需要交叉编译——rqbit 用上游预编译
+      # 的静态 musl 二进制，luci-app-rqbit 是纯 JS/Lua 文件。而 SDK 里编译
+      # luci-base 的依赖 lucihttp 必然失败：liblucihttp-lua/-ucode 只声明
+      # DEPENDS:=+liblua/+libucode（仅库、无头文件），lua.h 与 ucode/module.h
+      # 在 SDK 中无法获得（ucode 是 base 包，SDK 不含其源码）。这是 LuCI 上游
+      # 的依赖 bug，只有完整 buildroot 能编过。
+      - name: 打包
         run: |
-          # 注意：不要装 python3-distutils —— Ubuntu 24.04 (noble) 已移除该包。
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential ccache ecj fastjar file gawk gettext git \
-            libncurses-dev libssl-dev python3-setuptools \
-            rsync unzip wget xsltproc zlib1g-dev zstd
-
-      - name: 解析 SDK 下载地址
-        id: sdk
-        run: |
-          set -e
-          if [ -n "$RELEASE_PIN" ]; then
-            ver="$RELEASE_PIN"
-          else
-            ver=$(curl -fsSL https://downloads.openwrt.org/releases/ \
-                  | grep -oE "href=\"${RELEASE_SERIES}\.[0-9]+/\"" \
-                  | grep -oE '[0-9]+(\.[0-9]+)+' | sort -V | tail -1)
-          fi
-          [ -n "$ver" ] || { echo "找不到 ${RELEASE_SERIES}.x 版本"; exit 1; }
-          dir="https://downloads.openwrt.org/releases/$ver/targets/$TARGET/$SUBTARGET/"
-          file=$(curl -fsSL "$dir" | grep -oE 'openwrt-sdk-[^"?#]*\.tar\.zst' | head -1)
-          [ -n "$file" ] || { echo "找不到 SDK 文件: $dir"; exit 1; }
-          {
-            echo "version=$ver"
-            echo "url=$dir$file"
-          } >> "$GITHUB_OUTPUT"
-          echo "SDK: $dir$file"
-
-      - name: 缓存 SDK
-        id: cache-sdk
-        uses: actions/cache@v4
-        with:
-          path: sdk
-          key: openwrt-sdk-${{ env.TARGET }}-${{ env.SUBTARGET }}-${{ steps.sdk.outputs.version }}
-
-      - name: 下载并解压 SDK
-        if: steps.cache-sdk.outputs.cache-hit != 'true'
-        run: |
-          set -e
-          curl -fsSL -o sdk.tar.zst "${{ steps.sdk.outputs.url }}"
-          tar --zstd -xf sdk.tar.zst
-          rm -f sdk.tar.zst
-          dir=$(find . -maxdepth 1 -type d -name 'openwrt-sdk-*' | head -1)
-          [ -n "$dir" ] || { echo "解压后没找到 openwrt-sdk-* 目录"; exit 1; }
-          mv "$dir" sdk
-
-      - name: 安装 feeds
-        run: |
-          cd sdk
-          # luci-base 会拉起 lucihttp 的 Lua 绑定，后者依赖 packages feed 里的
-          # lua。只装 luci feed 会导致编译 lucihttp 时找不到 lua.h。
-          ./scripts/feeds update luci packages
-          ./scripts/feeds install luci-base lua
-          ls package/feeds/luci/ | head -20
-
-      - name: 放入待编译包
-        run: |
-          cp -r "$GITHUB_WORKSPACE/rqbit"          sdk/package/rqbit
-          cp -r "$GITHUB_WORKSPACE/luci-app-rqbit" sdk/package/luci-app-rqbit
-
-      - name: 编译
-        run: |
-          cd sdk
-          # 上游 liblucihttp-lua 只声明 DEPENDS:=+liblua（仅库、无头文件），
-          # SDK 里编译必然 fatal error: lua.h —— 这是 LuCI 的依赖 bug。
-          # luci-base 只依赖 +liblucihttp-ucode，不需要 Lua 绑定，直接关掉。
-          echo '# CONFIG_PACKAGE_liblucihttp-lua is not set' >> .config
-          make defconfig
-          make package/rqbit/compile V=s
-          make package/luci-app-rqbit/compile V=s
+          python3 tools/mkipk.py --outdir bin
 
       - name: 汇总产物
         run: |
           echo "### 构建产物" >> "$GITHUB_STEP_SUMMARY"
-          find sdk/bin/packages -name '*.ipk' -printf '- `%p` (%s bytes)\n' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          ls -l bin/ >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # 打包脚本会对上游二进制做 sha256 校验，这里再复核一遍包内容可读。
+          for f in bin/*.ipk; do
+            tar tzf "$f" >/dev/null && echo "OK $f" || { echo "BAD $f"; exit 1; }
+          done
 
       - uses: actions/upload-artifact@v4
         with:
           name: rqbit-ipk
-          path: sdk/bin/packages/*/*/*.ipk
+          path: bin/*.ipk
           if-no-files-found: error
