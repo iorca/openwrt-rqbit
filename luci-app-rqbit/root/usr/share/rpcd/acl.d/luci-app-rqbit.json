@@ -1,0 +1,20 @@
+{
+	"luci-app-rqbit": {
+		"description": "Grant access to the rqbit torrent client",
+		"read": {
+			"ubus": {
+				"rqbit": [ "status", "torrent_files" ]
+			},
+			"uci": [ "rqbit" ],
+			"file": {
+				"/etc/config/rqbit": [ "read" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"rqbit": [ "add", "action", "only_files", "restart" ]
+			},
+			"uci": [ "rqbit" ]
+		}
+	}
+}

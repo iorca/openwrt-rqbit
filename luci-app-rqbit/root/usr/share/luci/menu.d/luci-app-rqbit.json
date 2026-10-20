@@ -1,0 +1,31 @@
+{
+	"admin/services/rqbit": {
+		"title": "rqbit",
+		"order": 60,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [ "luci-app-rqbit" ],
+			"uci": { "rqbit": true }
+		}
+	},
+
+	"admin/services/rqbit/downloads": {
+		"title": "下载管理",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "rqbit/rqbit"
+		}
+	},
+
+	"admin/services/rqbit/settings": {
+		"title": "设置",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "rqbit/settings"
+		}
+	}
+}

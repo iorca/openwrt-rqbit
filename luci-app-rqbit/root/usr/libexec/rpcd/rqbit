@@ -1,0 +1,73 @@
+#!/usr/bin/env lua
+-- SPDX-License-Identifier: Apache-2.0
+--
+-- rpcd plugin for luci-app-rqbit.
+--
+-- Calling convention (verified on this target by logging argv, do not guess):
+--   $0 list            -> enumerate: print {"method":{"arguments":{...}}}
+--   $0 call <method>   -> invoke: argument object arrives on stdin
+-- argv[1] is the literal word "call"; argv[2] is the method name.
+
+local jsonc = require "luci.jsonc"
+
+local METHODS = {
+	status = { description = "Service state, session stats and the torrent list" },
+	add = {
+		description = "Add a magnet, torrent URL, or base64-encoded .torrent",
+		arguments = {
+			body = "string",
+			is_url = "boolean",
+			paused = "boolean",
+			output_folder = "string",
+			only_files_regex = "string"
+		}
+	},
+	action = {
+		description = "pause / start / forget / delete a torrent",
+		arguments = { id = "string", action = "string" }
+	},
+	torrent_files = {
+		description = "File list for one torrent",
+		arguments = { id = "string" }
+	},
+	only_files = {
+		description = "Change the selected file set",
+		arguments = { id = "string", files = "array" }
+	},
+	restart = { description = "Restart the rqbit service" }
+}
+
+local verb = arg and arg[1]
+local method = arg and arg[2]
+
+if verb == "list" or verb == nil or verb == "" then
+	local out = {}
+	for name, spec in pairs(METHODS) do
+		local ent = { description = spec.description }
+		if spec.arguments then ent.arguments = spec.arguments end
+		out[name] = ent
+	end
+	io.write(jsonc.stringify(out))
+	os.exit(0)
+end
+
+if verb == "call" then
+	if not (method and METHODS[method]) then
+		io.write(jsonc.stringify({ ok = false, error = "unknown method: " .. tostring(method) }))
+		os.exit(0)
+	end
+
+	local api = require "luci.rqbit.api"
+	local req = jsonc.parse(io.read("*a") or "{}") or {}
+	req.method = method
+
+	local ok, res = pcall(api.dispatch, req)
+	if not ok then
+		io.write(jsonc.stringify({ ok = false, error = tostring(res) }))
+	else
+		io.write(jsonc.stringify(res or { ok = false, error = "no result" }))
+	end
+	os.exit(0)
+end
+
+io.write(jsonc.stringify({ ok = false, error = "bad verb: " .. tostring(verb) }))

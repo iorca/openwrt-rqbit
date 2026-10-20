@@ -1,0 +1,20 @@
+# 构建产物
+bin/
+build/
+
+# 打包脚本下载的源码缓存
+tools/.cache/
+
+# 本地开发辅助脚本（SSH/部署用，不属于包内容）
+_*.py
+_*.sh
+
+# Python
+__pycache__/
+*.pyc
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+*~

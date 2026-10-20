@@ -1,0 +1,12 @@
+# OpenWrt 的 init 脚本和 rpcd 插件由 /bin/sh 与 lua 解释执行，CRLF 会导致
+# "syntax error: unexpected $'\r'"。这些文件必须以 LF 落盘，包括 Windows 检出时。
+*.init	text eol=lf
+*.config	text eol=lf
+*-defaults	text eol=lf
+*.lua	text eol=lf
+*.js	text eol=lf
+*.json	text eol=lf
+*.py	text eol=lf
+*.sh	text eol=lf
+Makefile	text eol=lf
+*.md	text eol=lf

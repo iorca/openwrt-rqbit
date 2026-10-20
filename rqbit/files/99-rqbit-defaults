@@ -1,0 +1,43 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# First-boot setup for rqbit:
+#  - pick a sensible download dir (prefer an existing /mnt/* data mount)
+#  - open the HTTP API port on the LAN zone
+#  - enable the service
+#
+# uci-defaults scripts run once, at first boot after the package is installed.
+
+[ -n "$IPKG_INSTROOT" ] && exit 0
+. /lib/functions.sh
+
+# --- download dir: prefer a mounted data disk -------------------------------
+cur_dir="$(uci -q get rqbit.main.download_dir)"
+if [ "$cur_dir" = "/mnt/data/rqbit" ] && [ ! -d /mnt/data ]; then
+	for d in /mnt/sda1 /mnt/sdb1 /mnt/usb /mnt/nvme0n1p1; do
+		[ -d "$d" ] && { uci -q set rqbit.main.download_dir="$d/rqbit"; break; }
+	done
+fi
+mkdir -p "$(uci -q get rqbit.main.download_dir)" 2>/dev/null
+
+# --- firewall: allow the API port from LAN ----------------------------------
+api_port="$(uci -q get rqbit.main.api_listen)"
+api_port="${api_port##*:}"
+[ -n "$api_port" ] || api_port=3030
+
+if [ -z "$(uci -q get firewall.rqbit_web)" ]; then
+	uci -q batch <<-EOF
+		set firewall.rqbit_web=rule
+		set firewall.rqbit_web.name='Allow-rqbit-web'
+		set firewall.rqbit_web.src='lan'
+		set firewall.rqbit_web.proto='tcp'
+		set firewall.rqbit_web.dest_port='$api_port'
+		set firewall.rqbit_web.target='ACCEPT'
+		commit firewall
+	EOF
+fi
+
+uci -q commit rqbit
+/etc/init.d/rqbit enable 2>/dev/null
+
+exit 0

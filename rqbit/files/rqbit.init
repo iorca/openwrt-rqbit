@@ -1,0 +1,116 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: Apache-2.0
+#
+# procd init script for rqbit.
+#
+# rqbit's CLI shape matters here: every global flag must appear BEFORE the
+# "server start" subcommand, and the output folder is a POSITIONAL argument of
+# "server start". Verified against v9.0.1
+#   crates/rqbit/src/main.rs:331  struct ServerOpts
+#   crates/rqbit/src/main.rs:302  struct ServerStartOptions { output_folder: String, .. }
+#   crates/rqbit/src/main.rs:430  enum SubCommand { Server(..), Share(..), Download(..) }
+
+USE_PROCD=1
+START=95
+STOP=10
+
+PROG=/usr/bin/rqbit
+
+start_instance() {
+	local cfg="$1"
+	local enabled download_dir api_listen listen_port persistence_dir watch_dir
+	local allow_create auth_user auth_pass disable_upnp disable_lsd ipv4_only
+	local ratelimit_download ratelimit_upload peer_limit worker_threads
+	local blocklist_url trackers_file log_level log_file extra_args
+
+	config_get_bool enabled "$cfg" 'enabled' 0
+	[ "$enabled" = "1" ] || return 0
+
+	config_get download_dir    "$cfg" download_dir    '/mnt/data/rqbit'
+	config_get api_listen      "$cfg" api_listen      '0.0.0.0:3030'
+	config_get listen_port     "$cfg" listen_port     '4240'
+	config_get persistence_dir "$cfg" persistence_dir ''
+	config_get watch_dir       "$cfg" watch_dir       ''
+	config_get_bool allow_create "$cfg" allow_create 1
+	config_get auth_user       "$cfg" auth_user       ''
+	config_get auth_pass       "$cfg" auth_pass       ''
+	config_get_bool disable_upnp "$cfg" disable_upnp 1
+	config_get_bool disable_lsd  "$cfg" disable_lsd  0
+	config_get_bool ipv4_only    "$cfg" ipv4_only    0
+	config_get ratelimit_download "$cfg" ratelimit_download ''
+	config_get ratelimit_upload   "$cfg" ratelimit_upload   ''
+	config_get peer_limit      "$cfg" peer_limit      ''
+	config_get worker_threads  "$cfg" worker_threads  ''
+	config_get blocklist_url   "$cfg" blocklist_url   ''
+	config_get trackers_file   "$cfg" trackers_file   ''
+	config_get log_level       "$cfg" log_level       'info'
+	config_get log_file        "$cfg" log_file        ''
+	config_get extra_args      "$cfg" extra_args      ''
+
+	[ -n "$download_dir" ] || {
+		logger -t rqbit "section '$cfg': download_dir is empty, skipping"
+		return 1
+	}
+
+	mkdir -p "$download_dir" 2>/dev/null
+	[ -n "$watch_dir" ] && mkdir -p "$watch_dir" 2>/dev/null
+
+	# Without --persistence-location rqbit calls the `directories` crate to find
+	# an XDG config dir. On OpenWrt $HOME is unset for procd services, so that
+	# lookup fails and the process exits during Session::new_with_opts. Always
+	# pass an explicit path.
+	[ -n "$persistence_dir" ] || persistence_dir="$download_dir/.session"
+	mkdir -p "$persistence_dir" 2>/dev/null
+
+	procd_open_instance "$cfg"
+	procd_set_param command "$PROG"
+
+	# ---- global flags (must precede the subcommand) ----
+	procd_append_param command -v "$log_level"
+	[ -n "$api_listen" ] && procd_append_param command --http-api-listen-addr "$api_listen"
+	[ "$allow_create" = "1" ] && procd_append_param command --http-api-allow-create
+	[ -n "$listen_port" ] && procd_append_param command --listen-port "$listen_port"
+	[ "$disable_upnp" = "1" ] && procd_append_param command --disable-upnp-port-forward
+	[ "$disable_lsd" = "1" ] && procd_append_param command --disable-lsd
+	[ "$ipv4_only" = "1" ] && procd_append_param command --ipv4-only
+	[ -n "$ratelimit_download" ] && procd_append_param command --ratelimit-download "$ratelimit_download"
+	[ -n "$ratelimit_upload" ] && procd_append_param command --ratelimit-upload "$ratelimit_upload"
+	[ -n "$peer_limit" ] && procd_append_param command --peer-limit "$peer_limit"
+	[ -n "$worker_threads" ] && procd_append_param command --worker-threads "$worker_threads"
+	[ -n "$blocklist_url" ] && procd_append_param command --blocklist-url "$blocklist_url"
+	[ -n "$trackers_file" ] && procd_append_param command --trackers-filename "$trackers_file"
+	[ -n "$log_file" ] && procd_append_param command --log-file "$log_file"
+
+	# ---- subcommand ----
+	procd_append_param command server start "$download_dir"
+	procd_append_param command --persistence-location "$persistence_dir"
+	[ -n "$watch_dir" ] && procd_append_param command --watch-folder "$watch_dir"
+
+	# ---- escape hatch for flags this script does not model ----
+	[ -n "$extra_args" ] && procd_append_param command $extra_args
+
+	# Basic auth is env-only in rqbit (main.rs:699 reads
+	# RQBIT_HTTP_BASIC_AUTH_USERPASS, format "user:pass").
+	if [ -n "$auth_user" ]; then
+		procd_set_param env "RQBIT_HTTP_BASIC_AUTH_USERPASS=${auth_user}:${auth_pass}"
+	fi
+
+	# procd forwards stdout/stderr to syslog. The console tracing layer does NOT
+	# disable ANSI, so log lines carry escape codes in logread. Set log_file to
+	# get a clean copy on disk (the file layer is ansi=false, line 123 of
+	# crates/librqbit/src/tracing_subscriber_config_utils.rs).
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_set_param respawn 3600 5 5
+	procd_set_param limits nofile="8192 8192"
+	procd_close_instance
+}
+
+start_service() {
+	config_load rqbit
+	config_foreach start_instance rqbit
+}
+
+service_triggers() {
+	procd_add_reload_trigger 'rqbit'
+}
