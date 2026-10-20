@@ -184,9 +184,28 @@ function stateClass(st, finished) {
 		}.bind(this));
 	},
 
+	/* 种子表格。不用 LuCI 的 .table/.tr/.td 组件——其 table-titles 行与
+	 * 数据行在部分主题下 display 语义不一致，表头单元格会缩成内容宽度，
+	 * 与数据行列边界错位（实机截图实测）。改用 flex 自绘：flex-basis 保底、
+	 * flex-grow 分摊剩余宽度，长名称单行省略（完整名放 title 悬浮属性），
+	 * 任何一列都不会把其他列挤出屏幕。 */
 	renderTorrents: function(torrents) {
 		if (!torrents || !torrents.length)
 			return E('p', { 'class': 'cbi-section-descr' }, _('暂无种子，请在上方添加。'));
+
+		function cell(grow, basis) {
+			return 'flex:%d 1 %dpx;min-width:0;padding:0 6px;box-sizing:border-box'.format(grow, basis);
+		}
+
+		var head = E('div', {
+			'style': 'display:flex;flex-wrap:wrap;align-items:center;padding:6px 2px;font-weight:bold;color:#7a8794;border-bottom:2px solid rgba(0,0,0,.15)'
+		}, [
+			E('div', { 'style': cell(3, 260) }, _('名称')),
+			E('div', { 'style': cell(1, 70) }, _('状态')),
+			E('div', { 'style': cell(3, 220) }, _('进度')),
+			E('div', { 'style': cell(2, 150) }, _('速度')),
+			E('div', { 'style': cell(2, 150) }, _('操作'))
+		]);
 
 		var rows = torrents.map(function(t) {
 			var s = t.stats || {};
@@ -195,28 +214,30 @@ function stateClass(st, finished) {
 			var st = s.state || 'unknown';
 			var fin = !!s.finished;
 			var numPct = s.total_bytes > 0 ? (s.progress_bytes / s.total_bytes * 100) : 0;
+			var name = t.name || (t.info_hash || '').substring(0, 16);
+			var sub = (t.output_folder || '') + ' · ' + (t.info_hash || '').substring(0, 16) + '…';
 
-			return E('tr', { 'class': 'tr' }, [
-				/* 名称列限宽并强制断行：种子名常是几十个字符的日文/英文长串，
-				 * 不约束的话 auto 布局会把进度和速度两列挤出屏幕。 */
-				E('td', { 'class': 'td', 'data-title': _('名称'),
-					'style': 'max-width:300px;min-width:160px' }, [
+			return E('div', {
+				'style': 'display:flex;flex-wrap:wrap;align-items:center;padding:8px 2px;border-bottom:1px solid rgba(0,0,0,.08)'
+			}, [
+				E('div', { 'style': cell(3, 260) }, [
 					E('strong', {
-						'style': 'display:block;word-break:break-all;overflow-wrap:anywhere'
-					}, t.name || t.info_hash.substring(0, 16)),
-					E('br'),
+						'style': 'display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis',
+						'title': name
+					}, name),
 					E('small', {
 						'class': 'cbi-section-descr',
-						'style': 'display:block;word-break:break-all;overflow-wrap:anywhere'
-					}, (t.output_folder || '') + ' · ' + (t.info_hash || '').substring(0, 16) + '…')
+						'style': 'display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis',
+						'title': sub
+					}, sub)
 				]),
-				E('td', { 'class': 'td', 'data-title': _('状态') }, [
+				E('div', { 'style': cell(1, 70) }, [
 					E('span', { 'class': stateClass(st, fin) }, stateLabel(st, fin)),
 					s.error ? E('div', { 'class': 'cbi-section-descr' }, s.error) : ''
 				]),
-				E('td', { 'class': 'td', 'data-title': _('进度') }, [
+				E('div', { 'style': cell(3, 220) }, [
 					E('div', {
-						'style': 'background:rgba(0,0,0,.12);border-radius:3px;height:14px;position:relative;min-width:120px;overflow:hidden'
+						'style': 'background:rgba(0,0,0,.12);border-radius:3px;height:14px;overflow:hidden'
 					}, [
 						E('div', {
 							'style': 'width:%s%%;height:100%%;background:%s'.format(
@@ -224,16 +245,18 @@ function stateClass(st, finished) {
 								st === 'error' ? '#d9534f' : (s.finished ? '#5cb85c' : '#337ab7'))
 						})
 					]),
-					E('small', {}, pct + ' · ' + fmtBytes(s.progress_bytes) + ' / ' + fmtBytes(s.total_bytes))
+					E('small', {
+						'style': 'display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'
+					}, pct + ' · ' + fmtBytes(s.progress_bytes) + ' / ' + fmtBytes(s.total_bytes))
 				]),
-				E('td', { 'class': 'td', 'data-title': _('速度') }, [
-					E('div', {}, [ '↓ ', fmtSpeed(live.download_speed && live.download_speed.mbps) ]),
-					E('div', {}, [ '↑ ', fmtSpeed(live.upload_speed && live.upload_speed.mbps) ]),
+				E('div', { 'style': cell(2, 150) }, [
+					E('div', { 'style': 'white-space:nowrap' }, [ '↓ ', fmtSpeed(live.download_speed && live.download_speed.mbps) ]),
+					E('div', { 'style': 'white-space:nowrap' }, [ '↑ ', fmtSpeed(live.upload_speed && live.upload_speed.mbps) ]),
 					live.time_remaining
-						? E('small', { 'class': 'cbi-section-descr' }, _('剩余 ') + live.time_remaining.human_readable)
+						? E('small', { 'class': 'cbi-section-descr', 'style': 'white-space:nowrap' }, _('剩余 ') + live.time_remaining.human_readable)
 						: ''
 				]),
-				E('td', { 'class': 'td', 'data-title': _('操作') }, [
+				E('div', { 'style': cell(2, 150) }, [
 					st === 'paused'
 						? E('button', {
 							'class': 'cbi-button cbi-button-apply',
@@ -257,17 +280,7 @@ function stateClass(st, finished) {
 			]);
 		}.bind(this));
 
-		return E('div', { 'class': 'table' }, [
-			E('table', { 'class': 'table' }, [
-				E('tr', { 'class': 'tr table-titles' }, [
-					E('th', { 'class': 'th' }, _('名称')),
-					E('th', { 'class': 'th' }, _('状态')),
-					E('th', { 'class': 'th' }, _('进度')),
-					E('th', { 'class': 'th' }, _('速度')),
-					E('th', { 'class': 'th' }, _('操作'))
-				])
-			].concat(rows))
-		]);
+		return E('div', {}, [ head ].concat(rows));
 	},
 
 	renderStats: function(st) {
