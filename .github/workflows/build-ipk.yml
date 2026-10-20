@@ -69,3 +69,40 @@ jobs:
           name: rqbit-ipk
           path: bin/*.ipk
           if-no-files-found: error
+
+  # artifact 有 90 天保留期且没有面向用户的下载页，所以每次成功构建后
+  # 同步发布成 Release：
+  #   * 滚动标签 latest —— 每次 master 构建都更新，始终是最新可用包
+  #   * 版本标签 vX.Y.Z —— 由 check-upstream 跟进上游时创建，做正式发布点
+  release:
+    needs: [gate, build]
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rqbit-ipk
+          path: dist
+
+      - name: 更新滚动 Release (latest)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -e
+          gh release view latest >/dev/null 2>&1 \
+            || gh release create latest --title "最新构建" \
+                 --notes "跟随 master 自动更新，文件名中的版本即 rqbit 上游版本。"
+          gh release upload latest dist/*.ipk --clobber
+
+      - name: 发布版本 Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -e
+          gh release create "${{ github.ref_name }}" dist/*.ipk --generate-notes 2>/dev/null \
+            || gh release upload "${{ github.ref_name }}" dist/*.ipk --clobber
