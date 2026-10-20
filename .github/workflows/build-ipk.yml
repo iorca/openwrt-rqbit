@@ -33,9 +33,10 @@ jobs:
       - name: 安装依赖
         run: |
           sudo apt-get update
+          # 注意：不要装 python3-distutils —— Ubuntu 24.04 (noble) 已移除该包。
           sudo apt-get install -y \
             build-essential ccache ecj fastjar file gawk gettext git \
-            libncurses-dev libssl-dev python3-setuptools python3-distutils \
+            libncurses-dev libssl-dev python3-setuptools \
             rsync unzip wget xsltproc zlib1g-dev zstd
 
       - name: 解析 SDK 下载地址
