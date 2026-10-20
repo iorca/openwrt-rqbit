@@ -85,8 +85,25 @@ config rqbit 'main'
 
 ### GitHub Actions
 
-`.github/workflows/build-ipk.yml` 会在 push 时用 OpenWrt SDK（qualcommax/ipq60xx）
-构建两个包并上传 artifact 里的 `.ipk`。版本写在 workflow 顶部的 `env` 里。
+三个工作流，全自动，不需要手动干预：
+
+| 工作流 | 触发 | 作用 |
+| --- | --- | --- |
+| `build-ipk.yml` | push（包目录变更）、手动、每两周 | 用 OpenWrt SDK（qualcommax/ipq60xx）编译两个包，上传 `.ipk` artifact |
+| `check-upstream.yml` | 每两周、手动 | 查 `ikatson/rqbit` 最新 release，有新版就改 `PKG_VERSION` / `PKG_HASH` 并打标签，再触发构建 |
+| `keepalive.yml` | 每周 | 空提交心跳，防止定时 workflow 被 GitHub 自动禁用 |
+
+几个实现要点：
+
+- **两周节拍**不能用 cron `*/14`。该写法落在「日」字段上，表示每月 1/15/29 号，
+  月末会被截断，不是真正的 14 天周期。改用「每周 cron + 纪元周数奇偶闸门」
+  （`$(date +%s) / 604800 % 2`），相邻两次运行相差正好 7 天，奇偶必然交替。
+- **心跳是必需的**：GitHub 会对「仓库 60 天无活动」的定时 workflow 自动禁用，
+  一旦禁用，跟上游的定时检查就永久失效。心跳只在近 5 天无提交时才写，日常开发不会制造噪音。
+- **必须显式触发构建**：`check-upstream` 提交用的是 `GITHUB_TOKEN`，而 GitHub 不会为
+  `GITHUB_TOKEN` 触发的 push 启动新 workflow run（防递归机制），所以不能依赖 push 级联。
+- SDK 版本自动探测 25.12.x 最新版，需要固定时改 `env.RELEASE_PIN`。
+- 编译依赖里**不要**装 `python3-distutils`，Ubuntu 24.04 (noble) 已移除该包。
 
 ## 已知限制
 

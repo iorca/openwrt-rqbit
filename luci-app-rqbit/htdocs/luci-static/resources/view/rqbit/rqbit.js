@@ -284,31 +284,42 @@ function stateClass(st, finished) {
 		]);
 	},
 
-	render: function(data) {
-		var st = data[0] || {};
-		var port = st.api_port || '3030';
-		var running = st.running;
-
-		var statusBanner;
-		if (!st.ok) {
-			statusBanner = E('div', { 'class': 'alert-message warning' }, [
+	/* 顶部状态横幅。放在独立容器里由 refresh() 整体重建，否则服务在两次
+	 * 轮询之间恢复/掉线时，横幅会一直停在加载那一刻的状态。 */
+	renderBanner: function(st) {
+		if (!st || !st.ok) {
+			return E('div', { 'class': 'alert-message warning' }, [
 				E('strong', {}, _('rqbit 服务未连接。')),
-				st.error || '',
+				(st && st.error) || '',
 				' ',
 				E('button', {
 					'class': 'cbi-button cbi-button-action',
 					'click': ui.createHandlerFn(this, 'handleRestart')
 				}, _('启动/重启服务'))
 			]);
-		} else {
-			statusBanner = E('div', { 'class': 'cbi-section-descr' }, [
-				_('服务运行中 · API 端口 %s · ').format(port),
-				E('a', { 'href': 'http://%s:%s/web/'.format(window.location.hostname, port), 'target': '_blank' },
-					_('打开 rqbit 完整 Web 界面'))
-			]);
 		}
+		var port = st.api_port || '3030';
+		return E('div', { 'class': 'cbi-section-descr' }, [
+			_('服务运行中 · API 端口 %s · ').format(port),
+			E('a', { 'href': 'http://%s:%s/web/'.format(window.location.hostname, port), 'target': '_blank' },
+				_('打开 rqbit 完整 Web 界面'))
+		]);
+	},
 
-		/* 每 5 秒轮询刷新流量与种子列表。 */
+	/* 流量区常驻（服务掉线时显示占位文案），refresh() 负责双向刷新。 */
+	renderStatsBox: function(st) {
+		return E('div', { 'class': 'cbi-section', 'id': 'rqbit-stats' }, [
+			E('h3', {}, _('流量')),
+			(st && st.ok)
+				? this.renderStats(st)
+				: E('p', { 'class': 'cbi-section-descr' }, _('服务未运行，无法读取流量。'))
+		]);
+	},
+
+	render: function(data) {
+		var st = data[0] || {};
+
+		/* 每 5 秒轮询刷新横幅、流量与种子列表。 */
 		poll.add(L.bind(this.refresh, this), 5);
 
 		return E('div', { 'class': 'cbi-map' }, [
@@ -316,12 +327,9 @@ function stateClass(st, finished) {
 			E('div', { 'class': 'cbi-map-descr' },
 				_('BitTorrent 下载服务。本页用于管理服务与种子。')),
 
-			statusBanner,
+			E('div', { 'id': 'rqbit-banner' }, [ this.renderBanner(st) ]),
 
-			st.ok ? E('div', { 'class': 'cbi-section', 'id': 'rqbit-stats' }, [
-				E('h3', {}, _('流量')),
-				this.renderStats(st)
-			]) : '',
+			this.renderStatsBox(st),
 
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, _('添加种子')),
@@ -401,20 +409,35 @@ function stateClass(st, finished) {
 
 	refresh: function() {
 		return callStatus().then(function(st) {
-			var box = document.querySelector('#rqbit-list');
-			if (!box || !st || !st.ok) return;
-			var head = box.querySelector('h3');
-			box.innerHTML = '';
-			if (head) box.appendChild(head);
-			box.appendChild(this.renderTorrents(st.torrents));
+			st = st || {};
 
+			/* 横幅：服务上线/掉线两个方向都要能翻转。 */
+			var banner = document.querySelector('#rqbit-banner');
+			if (banner) {
+				banner.innerHTML = '';
+				banner.appendChild(this.renderBanner(st));
+			}
+
+			/* 流量区。 */
 			var statsBox = document.querySelector('#rqbit-stats');
 			if (statsBox) {
 				var sHead = statsBox.querySelector('h3');
 				statsBox.innerHTML = '';
 				if (sHead) statsBox.appendChild(sHead);
-				statsBox.appendChild(this.renderStats(st));
+				statsBox.appendChild(st.ok
+					? this.renderStats(st)
+					: E('p', { 'class': 'cbi-section-descr' }, _('服务未运行，无法读取流量。')));
 			}
+
+			/* 服务不可用时没有列表可刷，保留原样。 */
+			if (!st.ok) return;
+
+			var box = document.querySelector('#rqbit-list');
+			if (!box) return;
+			var head = box.querySelector('h3');
+			box.innerHTML = '';
+			if (head) box.appendChild(head);
+			box.appendChild(this.renderTorrents(st.torrents));
 		}.bind(this));
 	},
 
